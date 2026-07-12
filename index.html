@@ -358,7 +358,7 @@ function updateLandmarks(lms){
     lm.forEach((p,i)=>{
       const s = smoothed[h][i];
       const d = Math.hypot(p.x - s.x, p.y - s.y);
-      const A = Math.min(0.92, 0.22 + d*40);
+      const A = Math.min(0.97, 0.34 + d*60);
       s.x += (p.x - s.x)*A;
       s.y += (p.y - s.y)*A;
     });
@@ -643,7 +643,7 @@ function drawNails(){
       const len = Math.hypot(tx-dx,ty-dy);
       if(len < 4) return;
       const ang = Math.atan2(ty-dy,tx-dx);
-      const w = len*0.62*scale, h = len*0.82*scale;
+      const w = len*0.54*scale, h = len*0.94*scale;
       ctx.save();
       ctx.translate(tx+Math.cos(ang)*len*0.10, ty+Math.sin(ang)*len*0.10);
       ctx.rotate(ang+Math.PI/2);
@@ -668,11 +668,13 @@ function drawNails(){
   });
 }
 function nailPath(w,h){
+  // リアル寄りの爪型：縦長・先端はゆるいアーモンド・根元はゆるい半月
   ctx.beginPath();
-  ctx.moveTo(-w/2, h/2);
-  ctx.quadraticCurveTo(-w/2, -h/2, 0, -h/2);
-  ctx.quadraticCurveTo(w/2, -h/2, w/2, h/2);
-  ctx.quadraticCurveTo(0, h*0.66, -w/2, h/2);
+  ctx.moveTo(-w/2, h*0.26);
+  ctx.bezierCurveTo(-w/2, -h*0.26, -w*0.32, -h*0.50, 0, -h*0.50);
+  ctx.bezierCurveTo(w*0.32, -h*0.50, w/2, -h*0.26, w/2, h*0.26);
+  ctx.bezierCurveTo(w/2, h*0.46, w*0.28, h*0.56, 0, h*0.56);
+  ctx.bezierCurveTo(-w*0.28, h*0.56, -w/2, h*0.46, -w/2, h*0.26);
   ctx.closePath();
 }
 
@@ -699,14 +701,14 @@ const LOOKS = {
     base(c,w,h,'rgba(255,255,255,.5)','rgba(0,0,0,.6)');
     c.globalAlpha=keep;
   }},
-  gunmetal:{name:'ガンメタ', paint(c,w,h){
+  gunmetal:{tint:true, name:'ガンメタ', paint(c,w,h){
     const g=c.createLinearGradient(-w/2,0,w/2,0);
     g.addColorStop(0,'#23262c'); g.addColorStop(.25,'#5a616c');
     g.addColorStop(.5,'#31353d'); g.addColorStop(.72,'#767e8a');
     g.addColorStop(1,'#23262c');
     c.fillStyle=g; c.fillRect(-w/2,-h/2,w,h*1.2);
   }},
-  carbon:{name:'カーボン', paint(c,w,h){
+  carbon:{tint:true, name:'カーボン', paint(c,w,h){
     base(c,w,h,'#191b1f','#101114');
     const s=w*0.14;
     for(let y=-h*0.6, r=0; y<h*0.7; y+=s, r++){
@@ -718,7 +720,7 @@ const LOOKS = {
       }
     }
   }},
-  marble:{name:'黒大理石', paint(c,w,h,col,seed){
+  marble:{tint:true, name:'黒大理石', paint(c,w,h,col,seed){
     base(c,w,h,'#17181c','#0c0d10');
     const rnd=seeded(seed+19);
     c.strokeStyle='rgba(230,232,238,.75)'; c.lineWidth=w*0.02;
@@ -773,7 +775,7 @@ const LOOKS = {
     }
     c.shadowBlur=0;
   }},
-  camo:{name:'カモフラ', paint(c,w,h,col,seed){
+  camo:{tint:true, name:'カモフラ', paint(c,w,h,col,seed){
     base(c,w,h,'#4f5942','#3e4634');
     const rnd=seeded(seed+23);
     const cols=['#2f3627','#6b7355','#1e2318'];
@@ -791,7 +793,7 @@ const LOOKS = {
       }
     });
   }},
-  denim:{name:'デニム', paint(c,w,h,col,seed){
+  denim:{tint:true, name:'デニム', paint(c,w,h,col,seed){
     base(c,w,h,'#2c3e5c','#1e2a44');
     const rnd=seeded(seed+27);
     c.strokeStyle='rgba(255,255,255,.10)'; c.lineWidth=1;
@@ -803,7 +805,7 @@ const LOOKS = {
     c.beginPath(); c.moveTo(-w*0.34,-h/2); c.lineTo(-w*0.34,h*0.7); c.stroke();
     c.setLineDash([]);
   }},
-  goldline:{name:'黒×金', paint(c,w,h){
+  goldline:{tint:true, name:'黒×金', paint(c,w,h){
     base(c,w,h,'#141519','#0b0c0f');
     const g=c.createLinearGradient(-w*0.1,h*0.5,w*0.3,-h*0.5);
     g.addColorStop(0,'#8a6a2e'); g.addColorStop(.5,'#e8c987'); g.addColorStop(1,'#8a6a2e');
@@ -832,12 +834,24 @@ const LOOKS = {
 
 /* ================= マイデザイン ================= */
 const customLooks = [];
-function paintLook(c,w,h,col,seed){
-  if(currentLook.startsWith('custom:')){
-    const cl = customLooks[+currentLook.slice(7)];
-    if(cl){ drawCover(c, cl.img, w, h); return; }
+function paintLook(c,w,h,col,seed){ paintByKey(c,currentLook,w,h,col,seed); }
+function paintByKey(c,key,w,h,col,seed){
+  if(key.startsWith('custom:')){
+    const cl = customLooks[+key.slice(7)];
+    if(cl) drawCover(c, cl.img, w, h);
+    return;
   }
-  LOOKS[currentLook].paint(c,w,h,col,seed);
+  const lk = LOOKS[key];
+  lk.paint(c,w,h,col,seed);
+  if(lk.tint){
+    // 素材系デザインにも選択カラーの色味を反映
+    const keep = c.globalAlpha;
+    c.globalAlpha = keep*0.6;
+    c.globalCompositeOperation = 'color';
+    c.fillStyle = col; c.fillRect(-w/2,-h/2,w,h*1.2);
+    c.globalCompositeOperation = 'source-over';
+    c.globalAlpha = keep;
+  }
 }
 function drawCover(c,img,w,h){
   const H = h*1.2;
@@ -899,12 +913,7 @@ function refreshThumbs(){
     c.translate(52,66);
     const w=88,hh=120;
     c.save();
-    if(key.startsWith('custom:')){
-      const cl=customLooks[+key.slice(7)];
-      if(cl) drawCover(c, cl.img, w, hh);
-    } else {
-      LOOKS[key].paint(c,w,hh,currentColor,Object.keys(LOOKS).indexOf(key));
-    }
+    paintByKey(c,key,w,hh,currentColor,Object.keys(LOOKS).indexOf(key));
     c.globalAlpha=.2; c.fillStyle='#fff';
     c.beginPath(); c.ellipse(-w*0.18,-hh*0.2,w*0.14,hh*0.22,-0.3,0,Math.PI*2); c.fill();
     c.restore();
