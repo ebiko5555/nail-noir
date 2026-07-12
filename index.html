@@ -343,6 +343,7 @@ function ensureStill(){
     stillHands.onResults(res => {
       const lms = res.multiHandLandmarks || [];
       smoothed = lms.map(lm => lm.map(p => ({...p})));
+      nailState.length = 0;
       drawPhoto();
       if(lms.length){ setGuide(''); }
       else setGuide('NO HAND DETECTED — 手全体が写る明るい写真で');
@@ -353,17 +354,33 @@ function ensureStill(){
 }
 let lastSeenT = 0;
 function updateLandmarks(lms){
+  const now = performance.now();
+  const dt = Math.min(0.1, Math.max(0.001, (now - (updateLandmarks._t||now-16))/1000));
+  updateLandmarks._t = now;
   lms.forEach((lm,h) => {
-    if(!smoothed[h] || smoothed[h].length !== lm.length){ smoothed[h] = lm.map(p=>({...p})); return; }
+    if(!smoothed[h] || smoothed[h].length !== lm.length){
+      smoothed[h] = lm.map(p=>({x:p.x, y:p.y, vx:0, vy:0}));
+      return;
+    }
     lm.forEach((p,i)=>{
       const s = smoothed[h][i];
-      const d = Math.hypot(p.x - s.x, p.y - s.y);
-      const A = Math.min(0.97, 0.34 + d*60);
-      s.x += (p.x - s.x)*A;
-      s.y += (p.y - s.y)*A;
+      [['x','vx'],['y','vy']].forEach(([ax,v])=>{
+        const d = p[ax]-s[ax];
+        // デッドゾーン：ごく小さな差はAIの推定ノイズとみなして動かさない
+        if(Math.abs(d) < 0.0022){ s[v]*=0.5; return; }
+        // One Euroフィルター：止まっている時は強く平滑化、速く動くほど即追従
+        const dv = d/dt;
+        s[v] += alphaFor(1.0, dt)*(dv - s[v]);
+        const cutoff = 1.0 + 25*Math.abs(s[v]);
+        s[ax] += alphaFor(cutoff, dt)*d;
+      });
     });
   });
   smoothed.length = lms.length;
+}
+function alphaFor(cutoff, dt){
+  const r = 2*Math.PI*cutoff*dt;
+  return r/(r+1);
 }
 
 /* ================= カメラ ================= */
@@ -381,6 +398,7 @@ async function startCamera(){
     canvas.width = video.videoWidth; canvas.height = video.videoHeight;
     mode = 'live';
     smoothed = [];
+    nailState.length = 0;
     $('startOverlay').style.display='none';
     $('liveBtns').style.display='flex';
     $('snapBar').style.display='none';
@@ -621,6 +639,7 @@ async function loadImage(file){
 
 /* ================= 爪の描画 ================= */
 const FINGERS = [[4,3],[8,7],[12,11],[16,15],[20,19]];
+const nailState = [];
 function mirrored(){ return mode!=='photo' && facing==='user'; }
 function drawPhoto(){
   if(!baseImage) return;
@@ -640,9 +659,16 @@ function drawNails(){
   smoothed.forEach((lm, hi)=>{
     FINGERS.forEach(([tip,dip], fi)=>{
       const [tx,ty]=lmXY(lm[tip]), [dx,dy]=lmXY(lm[dip]);
-      const len = Math.hypot(tx-dx,ty-dy);
-      if(len < 4) return;
-      const ang = Math.atan2(ty-dy,tx-dx);
+      const rawLen = Math.hypot(tx-dx,ty-dy);
+      if(rawLen < 4) return;
+      const rawAng = Math.atan2(ty-dy,tx-dx);
+      // 爪の大きさ・傾きは別枠で安定化（チラつきの主犯なので強めに固定）
+      const st = nailState[hi*5+fi] || (nailState[hi*5+fi] = {len:rawLen, ang:rawAng});
+      const dLen = rawLen - st.len;
+      if(Math.abs(dLen) > st.len*0.035) st.len += dLen*Math.min(1, 0.12 + Math.abs(dLen)/st.len);
+      let dAng = ((rawAng - st.ang + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      if(Math.abs(dAng) > 0.035) st.ang += dAng*Math.min(1, 0.15 + Math.abs(dAng)*2);
+      const len = st.len, ang = st.ang;
       const w = len*0.54*scale, h = len*0.94*scale;
       ctx.save();
       ctx.translate(tx+Math.cos(ang)*len*0.10, ty+Math.sin(ang)*len*0.10);
